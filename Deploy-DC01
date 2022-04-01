@@ -1,0 +1,87 @@
+<# 
+    .SYNOPSIS
+    This script automates the deployment of a Active Directory Domain Controller (ADDC).
+    
+    For help, run get-help Deploy-DC.ps1
+
+    .EXAMPLE
+    .\Deploy-DC.ps1 -DomainName "xogs.io" -InstallAD
+    .\Deploy-DC.ps1 -DomainName "xogs.io" -DeployOU
+#>
+
+param (
+    [parameter(Mandatory = $true)]    
+    [string] $DomainName,
+    [switch] $InstallAD,
+    [switch] $DeployOU
+)
+
+# install ADDS role if $InstallAD is true
+if ($InstallAD -eq $true) {
+    # install ADDS role
+    Install-WindowsFeature `
+        -Name "AD-Domain-Services" `
+        -IncludeAllSubFeature `
+        -IncludeManagementTools
+    # configure new forest
+    Install-ADDSForest `
+        -DomainName $DomainName `
+        -InstallDNS
+}
+
+# deploys new OUs if $DeployOU is true
+if ($DeployOU -eq $true) {
+    # create OU structure
+    $dnsroot = (Get-ADDomain).DNSRoot
+    $sDSE = (Get-ADRootDSE).defaultNamingContext
+    New-ADOrganizationalUnit -Name "Admin" -Path "$sDSE"
+    New-ADOrganizationalUnit -Name "Groups" -Path "$sDSE"
+    New-ADOrganizationalUnit -Name "Quarantine" -Path "$sDSE"
+    New-ADOrganizationalUnit -Name "Workstations" -Path "$sDSE"
+    New-ADOrganizationalUnit -Name "WHFB Workstations" -Path "$sDSE"
+    New-ADOrganizationalUnit -Name "Servers" -Path "$sDSE"
+    New-ADOrganizationalUnit -Name "Tier 0" -Path ("OU=Admin,$sDSE")
+    New-ADOrganizationalUnit -Name "Tier 1" -Path ("OU=Admin,$sDSE")
+    New-ADOrganizationalUnit -Name "Tier 2" -Path ("OU=Admin,$sDSE")
+    New-ADOrganizationalUnit -Name "PAW" -Path ("OU=Tier 0,OU=Admin,$sDSE")
+    New-ADOrganizationalUnit -Name "Groups" -Path ("OU=Tier 0,OU=Admin,$sDSE")
+    New-ADOrganizationalUnit -Name "Servers" -Path ("OU=Tier 0,OU=Admin,$sDSE")
+    New-ADOrganizationalUnit -Name "RDS Infra" -Path ("OU= Servers,OU=Tier 0,OU=Admin,$sDSE")
+    New-ADOrganizationalUnit -Name "Update Services" -Path ("OU= Servers,OU=Tier 0,OU=Admin,$sDSE")
+    New-ADOrganizationalUnit -Name "Users" -Path ("OU=Tier 0,OU=Admin,$sDSE")
+    New-ADOrganizationalUnit -Name "Service Accounts" -Path ("OU=Tier 0,OU=Admin,$sDSE")
+    New-ADOrganizationalUnit -Name "Groups" -Path ("OU=Tier 1,OU=Admin,$sDSE")
+    New-ADOrganizationalUnit -Name "PAW" -Path ("OU=Tier 1,OU=Admin,$sDSE")
+    New-ADOrganizationalUnit -Name "Users" -Path ("OU=Tier 1,OU=Admin,$sDSE")
+    New-ADOrganizationalUnit -Name "Service Accounts" -Path ("OU=Tier 1,OU=Admin,$sDSE")
+    New-ADOrganizationalUnit -Name "Groups" -Path ("OU=Tier 2,OU=Admin,$sDSE")
+    New-ADOrganizationalUnit -Name "Users" -Path ("OU=Tier 2,OU=Admin,$sDSE")
+    New-ADOrganizationalUnit -Name "Service Accounts" -Path ("OU=Tier 2,OU=Admin,$sDSE")
+
+    Import-Module ServerManager
+    Add-WindowsFeature Gpmc | Out-Null
+    Import-Module GroupPolicy
+
+    Set-GpInheritance -target "OU=PAW,OU=Tier 0,OU=Admin,$sDSE" -IsBlocked Yes | Out-Null
+    Set-GpInheritance -target "OU=PAW,OU=Tier 1,OU=Admin,$sDSE" -IsBlocked Yes | Out-Null
+    
+    # create group for WHFB users
+    $groupName = "Windows Hello for Business Users"
+    $path = "OU=Groups," + ([ADSI]"LDAP://RootDSE").rootDomainNamingContext.value
+    New-ADGroup -Name $groupName -GroupCategory Security -GroupScope Global -Path $path
+
+    # create new user objects
+    $NewUser = "dtognolini_admin"
+    New-ADUser -Name $NewUser -SamAccountName $NewUser -UserPrincipalName "$($NewUser)@$($dnsroot)" -Path "OU=Users,OU=Tier 0, OU=Admin, $sDSE" -AccountPassword(Read-Host -AsSecureString "Input Password for $NewUser") -Enabled $true
+    $groups = @("Domain Admins", "Enterprise Admins", "Schema Admins")
+    foreach ($group in $groups) {
+        Add-ADGroupMember -Identity $group -Members $NewUser
+    }
+
+    $NewUser = "test"
+    New-ADUser -Name $NewUser -SamAccountName $NewUser -UserPrincipalName "$($NewUser)@$($dnsroot)" -Path "OU=Users,OU=Tier 0, OU=Admin, $sDSE" -AccountPassword(Read-Host -AsSecureString "Input Password for $NewUser") -Enabled $true
+    $groups = @("Windows Hello for Business Users")
+    foreach ($group in $groups) {
+        Add-ADGroupMember -Identity $group -Members $NewUser
+    }
+}
