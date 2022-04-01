@@ -71,7 +71,7 @@ if ($DeployOU -eq $true) {
     New-ADGroup -Name $groupName -GroupCategory Security -GroupScope Global -Path $path
 
     # create new user objects
-    $NewUser = "dtognolini_admin"
+    $NewUser = "admin"
     New-ADUser -Name $NewUser -SamAccountName $NewUser -UserPrincipalName "$($NewUser)@$($dnsroot)" -Path "OU=Users,OU=Tier 0, OU=Admin, $sDSE" -AccountPassword(Read-Host -AsSecureString "Input Password for $NewUser") -Enabled $true
     $groups = @("Domain Admins", "Enterprise Admins", "Schema Admins")
     foreach ($group in $groups) {
